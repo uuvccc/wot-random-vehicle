@@ -1,92 +1,92 @@
-# 坦克世界随机选车 MOD（mod_random_vehicle）
+# World of Tanks Random Vehicle MOD (mod_random_vehicle)
 
-在车库按 **F11**（可改键）随机选中自己的一辆战车。纯客户端功能，等同替你点击车辆，不读取服务器未下发信息，不含任何作弊逻辑。
+Press **F11** (rebindable) in the garage to randomly select one of your own vehicles. Purely a client-side feature — it is equivalent to you clicking a vehicle yourself. It does not read any server-side information that was not sent to the client, and contains no cheating logic.
 
-## 快速开始
+## Quick Start
 
 ```
-双击 install_wotmod.bat       ← 一键安装(成品, 最快)
-双击 build_and_deploy.bat    ← 一键构建+安装(改过源码后)
+Double-click install_wotmod.bat    ← one-click install (prebuilt, fastest)
+Double-click build_and_deploy.bat  ← one-click build + install (after source changes)
 ```
 
-详细安装步骤、目录、文件清单见 **[INSTALL.md](INSTALL.md)**。
+For detailed installation steps, directories, and file list, see **[INSTALL.md](INSTALL.md)**.
 
-## 筛选功能
+## Filtering
 
-F11 只从**符合筛选条件**的车里随机。筛选条件写在 `res/gui/mods/randomVehicle.xml` 的 `<filters>` 节点：
+F11 only picks from vehicles that match the **filter conditions**. Filters are configured in the `<filters>` node of `res/gui/mods/randomVehicle.xml`:
 
-- 金币车（不限 / 只要金币 / 只要银币）
-- 坦克类型（轻 / 中 / 重 / 坦克歼击车 / 自行火炮）
-- 国家、等级
+- Premium status (any / premium only / standard only)
+- Vehicle type (light / medium / heavy / tank destroyer / SPG)
+- Nation, tier
 
-配置示例与说明见 **[INSTALL.md](INSTALL.md#筛选随机池配置文件方式)**。
+Configuration examples and instructions are in **[INSTALL.md](INSTALL.md#筛选随机池配置文件方式)**.
 
-## 目录结构
+## Directory Structure
 
 ```
 wot-random-vehicle/
-├── src/mod_random_vehicle.py       ← 源码(Python 2.7)
-├── res/gui/mods/randomVehicle.xml  ← 按键配置
-├── build_wotmod.py                 ← 构建+部署脚本(Python 3)
-├── install_wotmod.py               ← 一键安装脚本(Python 3)
-├── install_wotmod.bat              ← 双击安装入口
-├── build_and_deploy.bat            ← 双击构建+安装入口
-├── dist/mod_random_vehicle.wotmod  ← 构建产物(游戏加载的包)
-├── INSTALL.md                      ← 详细安装部署指南
-├── AGENTS.md / CLAUDE.md           ← AI 代理指南
+├── src/mod_random_vehicle.py       ← source (Python 2.7)
+├── res/gui/mods/randomVehicle.xml  ← key configuration
+├── build_wotmod.py                 ← build + deploy script (Python 3)
+├── install_wotmod.py               ← one-click install script (Python 3)
+├── install_wotmod.bat              ← double-click install entry point
+├── build_and_deploy.bat            ← double-click build + install entry point
+├── dist/mod_random_vehicle.wotmod  ← build artifact (package loaded by the game)
+├── INSTALL.md                      ← detailed installation and deployment guide
+├── AGENTS.md / CLAUDE.md           ← AI agent guides
 └── README.md
 ```
 
-## 命令行
+## Command Line
 
 ```bash
-python build_wotmod.py --deploy                          # 构建并自动部署
-python install_wotmod.py --game-root "C:/Games/World_of_Tanks_CN"   # 仅安装成品
+python build_wotmod.py --deploy                          # build and deploy automatically
+python install_wotmod.py --game-root "C:/Games/World_of_Tanks_CN"   # install prebuilt package only
 ```
 
-## 部署位置（摘要）
+## Deployment Locations (Summary)
 
 ```
-<游戏根>/mods/<版本号>/mod_random_vehicle.wotmod      ← 主 MOD
-<游戏根>/res_mods/<版本号>/gui/mods/randomVehicle.xml ← 按键配置
+<game root>/mods/<version>/mod_random_vehicle.wotmod      ← main MOD
+<game root>/res_mods/<version>/gui/mods/randomVehicle.xml ← key configuration
 ```
 
-重启游戏即可。改键/筛选可用 `install_gui.py` 的"MOD 配置"面板，或直接编辑 `randomVehicle.xml`（如 `<key>` 改为 `KEY_F10` / `KEY_F12`，对应 `Keys` 模块常量名）；配置运行时热读取，保存约 1 秒生效，无需重启。
+Restart the game to activate. To rebind keys or adjust filters, use the "MOD configuration" panel in `install_gui.py`, or edit `randomVehicle.xml` directly (e.g. change `<key>` to `KEY_F10` / `KEY_F12`, matching the constant names in the `Keys` module). The configuration is hot-reloaded at runtime — changes take effect about 1 second after saving, with no restart needed.
 
-## 排障
+## Troubleshooting
 
-游戏根目录会生成 `mod_random_vehicle.debug`（分步日志）。`python.log` 里搜 `[mod_random_vehicle]`。出现 `HOTKEY: select result=True` 但车没切换 = 选车 API 版本不匹配，看下面的适配说明。
+A `mod_random_vehicle.debug` file (step-by-step log) is generated in the game root. Search `python.log` for `[mod_random_vehicle]`. If you see `HOTKEY: select result=True` but the vehicle does not change, the vehicle-selection API version does not match — see the adaptation notes below.
 
-## 版本适配注意事项（重要，都是实测踩坑记录）
+## Version Adaptation Notes (Important — all from real-world testing)
 
-这是 CN 客户端 **2.3.x**（2026）特有的 MOD 机制，与传统 WOT（1.x）差异很大：
+This is a MOD mechanism specific to the CN client **2.3.x** (2026), and it differs greatly from classic WOT (1.x):
 
-1. **客户端版本目录会变**：`paths.xml` 指向哪个版本号，MOD 就放哪个 `mods/<版本>/` 目录。客户端更新后必须重新部署（`build_wotmod.py --deploy` 会自动探测版本号）。错误现象：`mods/2.3.1.0/` 里明明有 MOD 却不生效，因为客户端已是 2.3.1.1。
+1. **The client version directory changes**: whichever version number `paths.xml` points to determines where the MOD goes in `mods/<version>/`. After a client update you must redeploy (`build_wotmod.py --deploy` detects the version number automatically). Symptom: the MOD is clearly present in `mods/2.3.1.0/` but does not load, because the client is already on 2.3.1.1.
 
-2. **散装 `.py` 不再被加载**：`res_mods/<版本>/scripts/client/mods/*.py` 在这个客户端**不执行**（传统机制已移除，`scripts/client/mods/` 在脚本包里 0 引用）。只能用 wotmod 包。
+2. **Loose `.py` files are no longer loaded**: `res_mods/<version>/scripts/client/mods/*.py` is **not executed** in this client (the legacy mechanism has been removed; `scripts/client/mods/` has zero references in the script package). Only wotmod packages work.
 
-3. **wotmod 格式要求**：
-   - 必须是**不压缩**的 zip（`ZIP_STORED`）
-   - 根目录必须有 **`res/` 挂载根**，脚本放 `res/scripts/client/gui/mods/`（注意中间有 `gui`）
-   - 文件名必须以 **`mod_`** 开头（如 `mod_random_vehicle.pyc`），加载器只执行 `mod_*.pyc`
-   - 加载失败时日志报 `Mod package ... load error: mod is empty or dont have mount root`
+3. **wotmod format requirements**:
+   - Must be an **uncompressed** zip (`ZIP_STORED`)
+   - Must have a **`res/` mount root** at the top level, with scripts placed in `res/scripts/client/gui/mods/` (note the `gui` in the middle)
+   - The filename must start with **`mod_`** (e.g. `mod_random_vehicle.pyc`); the loader only executes `mod_*.pyc`
+   - On load failure the log reports `Mod package ... load error: mod is empty or dont have mount root`
 
-4. **脚本必须编译为 `.pyc`**：原生加载器只执行 `.pyc`（`.py` 即使路径正确也不执行）。字节码魔数必须是标准 Python 2.7 的 `03 f3 0d 0a`（用官方 Python 2.7.18 编译即可）。
+4. **Scripts must be compiled to `.pyc`**: the native loader only executes `.pyc` (a `.py` file is not executed even at the correct path). The bytecode magic number must be standard Python 2.7 `03 f3 0d 0a` (compiling with official Python 2.7.18 is sufficient).
 
-5. **模块接口**：提供 `init()`/`fini()`（或 `finit()`）会被加载器调用；但**模块顶层代码在导入时就会执行**（sixthsense 插件就是纯顶层代码）。本 MOD 顶层 + init 双保险启动。
+5. **Module interface**: providing `init()`/`fini()` (or `finit()`) causes the loader to call them; but **module-level top code runs immediately on import** (the sixthsense plugin is pure top-level code). This MOD starts via both top-level code and `init()` as a double safeguard.
 
-6. **关键 API（2.3.1.1）**：
-   - 车辆列表：`dependency.instance(IItemsCache).items.getVehicles()` 返回**全科技树**所有车辆（含未购买），必须过滤 `isInInventory` 才是自己拥有的车
-   - 选车：`from gui.shared.event_dispatcher import selectVehicleInHangar; selectVehicleInHangar(intCD)`（官方 API，反汇编确认：派发 `SELECT_VEHICLE_IN_HANGAR` 事件 → `g_currentVehicle.selectVehicle` → `showHangar`）。单独调 `g_currentVehicle.selectVehicle(intCD)` **不会**驱动车库换车
-   - `skeletons.items_cache` 在 2.3.1.1 已移除，`IItemsCache` 在 `skeletons.gui.shared`
+6. **Key APIs (2.3.1.1)**:
+   - Vehicle list: `dependency.instance(IItemsCache).items.getVehicles()` returns **every vehicle in the full tech tree** (including unpurchased ones); you must filter by `isInInventory` to get only vehicles you own
+   - Vehicle selection: `from gui.shared.event_dispatcher import selectVehicleInHangar; selectVehicleInHangar(intCD)` (official API, confirmed by disassembly: dispatches the `SELECT_VEHICLE_IN_HANGAR` event → `g_currentVehicle.selectVehicle` → `showHangar`). Calling `g_currentVehicle.selectVehicle(intCD)` on its own **will not** drive the garage to switch vehicles
+   - `skeletons.items_cache` has been removed in 2.3.1.1; `IItemsCache` lives in `skeletons.gui.shared`
 
-7. **可参考的正常插件**：`mods/<版本>/zanju.researchprogressbar_1.3.1.wotmod`（研发进度条）、`sixthsense_core.wotmod`（第六感）——它们的内部结构就是标准答案。
+7. **Working plugins for reference**: `mods/<version>/zanju.researchprogressbar_1.3.1.wotmod` (research progress bar) and `sixthsense_core.wotmod` (Sixth Sense) — their internal structure is the canonical answer.
 
-## 卸载
+## Uninstall
 
-删除 `mods/<版本>/mod_random_vehicle.wotmod` 和 `res_mods/<版本>/gui/mods/randomVehicle.xml` 即可。
+Delete `mods/<version>/mod_random_vehicle.wotmod` and `res_mods/<version>/gui/mods/randomVehicle.xml`.
 
-## 合规声明
+## Compliance Statement
 
-- 只使用客户端已有数据（自己车库列表），无自动瞄准/预判/敌方装填等作弊逻辑
-- 等同于替玩家在车库点击车辆
+- Uses only data already available on the client (your own garage list); no auto-aim, no prediction, no enemy reload tracking, or any other cheating logic
+- Equivalent to the player clicking a vehicle in the garage
