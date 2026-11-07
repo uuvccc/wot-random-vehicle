@@ -40,7 +40,6 @@ CLASSES = [('lightTank', '轻坦'), ('mediumTank', '中坦'), ('heavyTank', '重
 NATIONS = [(0, '苏联'), (1, '德国'), (2, '美国'), (3, '法国'), (4, '英国'),
            (5, '中国'), (6, '日本'), (7, '捷克'), (8, '瑞典'), (9, '波兰'),
            (10, '意大利')]
-TIERS = list(range(1, 11))
 
 CONFIG_TEMPLATE = u'''<?xml version="1.0" encoding="UTF-8"?>
 <root>
@@ -100,7 +99,7 @@ class InstallerGUI(object):
     def __init__(self):
         self.root = tk.Tk()
         self.root.title(ICON_TEXT)
-        self.root.minsize(760, 860)
+        self.root.minsize(680, 560)
         self.log_queue = queue.Queue()
         self.worker = None
 
@@ -117,9 +116,9 @@ class InstallerGUI(object):
     # ---------- UI ----------
 
     def _build_widgets(self, initial_root):
-        pad = {'padx': 10, 'pady': 6}
+        pad = {'padx': 6, 'pady': 2}
 
-        main = ttk.Frame(self.root, padding=10)
+        main = ttk.Frame(self.root, padding=6)
         main.pack(fill='both', expand=True)
 
         # 游戏目录
@@ -157,7 +156,7 @@ class InstallerGUI(object):
         self._build_vehicle_widgets(main, pad)
 
         # 日志区
-        self.log_text = tk.Text(main, height=8, state='disabled',
+        self.log_text = tk.Text(main, height=5, state='disabled',
                                 font=('Consolas', 9), wrap='word')
         self.log_text.pack(fill='both', expand=True, **pad)
 
@@ -176,68 +175,75 @@ class InstallerGUI(object):
 
     def _build_config_widgets(self, main, pad):
         cfg = ttk.LabelFrame(
-            main, padding=8,
-            text='MOD 配置 (保存后运行中的游戏约 1 秒内自动生效)')
+            main, padding=4,
+            text='MOD 配置 (保存后约 1 秒生效, 多选逗号分隔, 留空=全部)')
         cfg.pack(fill='x', **pad)
 
-        key_row = ttk.Frame(cfg)
-        key_row.pack(fill='x', pady=2)
-        ttk.Label(key_row, text='触发键:').pack(side='left')
+        row1 = ttk.Frame(cfg)
+        row1.pack(fill='x')
+        ttk.Label(row1, text='触发键:').pack(side='left')
         self.key_var = tk.StringVar(value='KEY_F11')
-        ttk.Combobox(key_row, textvariable=self.key_var, values=KEY_CHOICES,
-                     width=10).pack(side='left', padx=4)
-        ttk.Label(key_row, text='轮询间隔:').pack(side='left', padx=(12, 0))
+        ttk.Combobox(row1, textvariable=self.key_var, values=KEY_CHOICES,
+                     width=10).pack(side='left', padx=(2, 8))
+        ttk.Label(row1, text='间隔:').pack(side='left')
         self.interval_var = tk.StringVar(value='0.15')
-        ttk.Entry(key_row, textvariable=self.interval_var,
-                  width=6).pack(side='left', padx=4)
-        ttk.Label(key_row, text='秒 (0.10~0.20 为宜)',
-                  foreground='#666').pack(side='left')
+        ttk.Entry(row1, textvariable=self.interval_var,
+                  width=5).pack(side='left', padx=2)
+        ttk.Label(row1, text='秒(0.10~0.20)', foreground='#666').pack(
+            side='left')
 
-        prem_row = ttk.Frame(cfg)
-        prem_row.pack(fill='x', pady=2)
-        ttk.Label(prem_row, text='金币车:').pack(side='left')
+        row2 = ttk.Frame(cfg)
+        row2.pack(fill='x')
+        ttk.Label(row2, text='金币车:').pack(side='left')
         self.premium_var = tk.StringVar(value=PREMIUM_MODES[0])
-        ttk.Combobox(prem_row, textvariable=self.premium_var,
-                     values=PREMIUM_MODES, width=10,
-                     state='readonly').pack(side='left', padx=4)
+        ttk.Combobox(row2, textvariable=self.premium_var, values=PREMIUM_MODES,
+                     width=9, state='readonly').pack(side='left', padx=(2, 8))
+        ttk.Label(row2, text='类型:').pack(side='left')
+        self.classes_var = tk.StringVar()
+        ttk.Entry(row2, textvariable=self.classes_var,
+                  width=26).pack(side='left', padx=2)
+        cls_add = ttk.Combobox(row2, width=11, state='readonly',
+                               values=[tag for tag, _ in CLASSES])
+        cls_add.set('添加...')
+        cls_add.bind('<<ComboboxSelected>>',
+                     lambda e: self._append_csv(self.classes_var, cls_add))
+        cls_add.pack(side='left', padx=2)
 
-        cls_row = ttk.Frame(cfg)
-        cls_row.pack(fill='x', pady=2)
-        ttk.Label(cls_row, text='坦克类型:').pack(side='left')
-        self.class_vars = {}
-        for tag, label in CLASSES:
-            v = tk.IntVar()
-            self.class_vars[tag] = v
-            ttk.Checkbutton(cls_row, text=label, variable=v).pack(
-                side='left', padx=4)
-        ttk.Label(cls_row, text='不勾=全部', foreground='#666').pack(
-            side='left', padx=6)
+        row3 = ttk.Frame(cfg)
+        row3.pack(fill='x')
+        ttk.Label(row3, text='国家:').pack(side='left')
+        self.nations_var = tk.StringVar()
+        ttk.Entry(row3, textvariable=self.nations_var,
+                  width=26).pack(side='left', padx=2)
+        nat_add = ttk.Combobox(row3, width=8, state='readonly',
+                               values=['%d %s' % (n, s) for n, s in NATIONS])
+        nat_add.set('添加...')
+        nat_add.bind('<<ComboboxSelected>>',
+                     lambda e: self._append_csv(self.nations_var, nat_add))
+        nat_add.pack(side='left', padx=2)
 
-        nat_row = ttk.Frame(cfg)
-        nat_row.pack(fill='x', pady=2)
-        ttk.Label(nat_row, text='国家:').pack(side='left')
-        nat_grid = ttk.Frame(nat_row)
-        nat_grid.pack(side='left')
-        self.nation_vars = {}
-        for i, (nid, label) in enumerate(NATIONS):
-            v = tk.IntVar()
-            self.nation_vars[nid] = v
-            ttk.Checkbutton(nat_grid, text=label, variable=v).grid(
-                row=i // 6, column=i % 6, sticky='w', padx=4)
-        ttk.Label(nat_row, text='不勾=全部', foreground='#666').pack(
-            side='left', padx=6)
+        row4 = ttk.Frame(cfg)
+        row4.pack(fill='x')
+        ttk.Label(row4, text='等级:').pack(side='left')
+        self.tiers_var = tk.StringVar()
+        ttk.Entry(row4, textvariable=self.tiers_var,
+                  width=26).pack(side='left', padx=2)
+        tier_add = ttk.Combobox(row4, width=6, state='readonly',
+                                values=[str(t) for t in range(1, 11)])
+        tier_add.set('添加...')
+        tier_add.bind('<<ComboboxSelected>>',
+                      lambda e: self._append_csv(self.tiers_var, tier_add))
+        tier_add.pack(side='left', padx=2)
 
-        tier_row = ttk.Frame(cfg)
-        tier_row.pack(fill='x', pady=2)
-        ttk.Label(tier_row, text='等级:').pack(side='left')
-        self.tier_vars = {}
-        for t in TIERS:
-            v = tk.IntVar()
-            self.tier_vars[t] = v
-            ttk.Checkbutton(tier_row, text=str(t), variable=v).pack(
-                side='left', padx=2)
-        ttk.Label(tier_row, text='不勾=全部', foreground='#666').pack(
-            side='left', padx=6)
+    @staticmethod
+    def _append_csv(var, combo):
+        """下拉选中项追加到逗号分隔列表(多选), 选完下拉复位。"""
+        token = combo.get().split(' ', 1)[0]  # '5 中国' -> '5'
+        items = [x for x in var.get().split(',') if x]
+        if token not in items:
+            items.append(token)
+            var.set(','.join(items))
+        combo.set('添加...')
 
     # ---------- 辅助 ----------
 
@@ -295,11 +301,11 @@ class InstallerGUI(object):
                 '默认位置: %s' % DEFAULT_GAME_ROOT)
 
     def _build_vehicle_widgets(self, main, pad):
-        box = ttk.LabelFrame(main, padding=6, text='车库车辆')
+        box = ttk.LabelFrame(main, padding=4, text='车库车辆')
         box.pack(fill='both', expand=True, **pad)
 
         bar = ttk.Frame(box)
-        bar.pack(fill='x', pady=(0, 4))
+        bar.pack(fill='x', pady=(0, 2))
         self.veh_count_var = tk.StringVar(value='尚未读取')
         ttk.Label(bar, textvariable=self.veh_count_var).pack(side='left')
         ttk.Button(bar, text='刷新列表',
@@ -309,7 +315,7 @@ class InstallerGUI(object):
         wrap.pack(fill='both', expand=True)
         cols = ('name', 'class', 'pay', 'nation', 'tier')
         self.veh_tree = ttk.Treeview(wrap, columns=cols, show='headings',
-                                     height=7)
+                                     height=5)
         for col, title, width in (('name', '车辆', 240), ('class', '类型', 110),
                                   ('pay', '金币/银币', 90), ('nation', '国家', 80),
                                   ('tier', '等级', 60)):
@@ -362,8 +368,8 @@ class InstallerGUI(object):
     # ---------- MOD 配置 ----------
 
     @staticmethod
-    def _split_set(text):
-        return set(x.strip() for x in (text or '').split(',') if x.strip())
+    def _norm_csv(text):
+        return ','.join(x.strip() for x in (text or '').split(',') if x.strip())
 
     def _load_config_into_ui(self):
         """把仓库里的 randomVehicle.xml 当前值填入界面。"""
@@ -387,15 +393,9 @@ class InstallerGUI(object):
             pm = 0
         self.premium_var.set(PREMIUM_MODES[pm] if 0 <= pm < len(PREMIUM_MODES)
                              else PREMIUM_MODES[0])
-        classes = self._split_set(f.findtext('classes'))
-        for tag, var in self.class_vars.items():
-            var.set(1 if tag in classes else 0)
-        nations = self._split_set(f.findtext('nations'))
-        for nid, var in self.nation_vars.items():
-            var.set(1 if str(nid) in nations else 0)
-        tiers = self._split_set(f.findtext('tiers'))
-        for t, var in self.tier_vars.items():
-            var.set(1 if str(t) in tiers else 0)
+        self.classes_var.set((f.findtext('classes') or '').strip())
+        self.nations_var.set((f.findtext('nations') or '').strip())
+        self.tiers_var.set((f.findtext('tiers') or '').strip())
 
     def _save_config(self):
         """把界面值写回 randomVehicle.xml; 返回是否成功。"""
@@ -415,9 +415,22 @@ class InstallerGUI(object):
             premium = PREMIUM_MODES.index(self.premium_var.get())
         except ValueError:
             premium = 0
-        classes = ','.join(tag for tag, _ in CLASSES if self.class_vars[tag].get())
-        nations = ','.join(str(n) for n, _ in NATIONS if self.nation_vars[n].get())
-        tiers = ','.join(str(t) for t in TIERS if self.tier_vars[t].get())
+        classes = self._norm_csv(self.classes_var.get())
+        nations = self._norm_csv(self.nations_var.get())
+        tiers = self._norm_csv(self.tiers_var.get())
+        valid_cls = set(tag for tag, _ in CLASSES)
+        if classes and any(c not in valid_cls for c in classes.split(',')):
+            messagebox.showerror('格式无效', '坦克类型必须是: ' +
+                                 '/'.join(tag for tag, _ in CLASSES))
+            return False
+        for label, csv, lo, hi in (('国家', nations, 0, 10),
+                                   ('等级', tiers, 1, 10)):
+            vals = csv.split(',') if csv else []
+            if any(not x.isdigit() or not lo <= int(x) <= hi for x in vals):
+                messagebox.showerror(
+                    '格式无效', '%s必须是 %d~%d 的数字ID, 逗号分隔。'
+                    % (label, lo, hi))
+                return False
         text = CONFIG_TEMPLATE.format(
             key=key, interval='%g' % interval, premium=premium,
             classes=classes, nations=nations, tiers=tiers)
