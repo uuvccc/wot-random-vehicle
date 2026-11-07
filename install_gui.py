@@ -28,8 +28,85 @@ SETTINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
 
 # MOD 运行时导出的车库清单文件名(位于游戏根目录)
 VEHICLES_FILE = 'mod_random_vehicle.vehicles.json'
+VEHICLES_POLL_MS = 2000  # 车库清单热加载轮询间隔(毫秒)
 
 ICON_TEXT = 'WOT Random Vehicle MOD 安装器'
+
+
+class MultiSelectCombo(ttk.Frame):
+    """多选下拉: 按钮显示已选项, 点击展开带复选框的列表, 点空处收起。"""
+
+    _STYLE = 'MultiSelect.TButton'
+
+    def __init__(self, master, options, width=26, **kw):
+        ttk.Frame.__init__(self, master, **kw)
+        self._items = list(options)          # [(value, label)]
+        self._vars = {}
+        self._popup = None
+        self._bind_id = None
+        ttk.Style().configure(self._STYLE, anchor='w')
+        self._btn = ttk.Button(self, command=self._toggle, width=width,
+                               style=self._STYLE)
+        self._btn.pack(fill='x')
+        for value, _label in self._items:
+            self._vars[value] = tk.IntVar(value=0)
+        self._update_text()
+
+    def get(self):
+        """返回逗号分隔的已选值; 空串表示"全部"。"""
+        return ','.join(value for value, _ in self._items
+                        if self._vars[value].get())
+
+    def set(self, csv):
+        selected = set(x.strip() for x in (csv or '').split(',') if x.strip())
+        for value, _ in self._items:
+            self._vars[value].set(1 if value in selected else 0)
+        self._update_text()
+
+    def _update_text(self):
+        labels = [label for value, label in self._items
+                  if self._vars[value].get()]
+        self._btn.configure(
+            text=(u'、'.join(labels) if labels else u'全部') + u'  ▼')
+
+    def _toggle(self):
+        self._close() if self._popup is not None else self._open()
+
+    def _open(self):
+        top = tk.Toplevel(self)
+        top.wm_overrideredirect(True)
+        try:
+            top.wm_attributes('-topmost', True)
+        except tk.TclError:
+            pass
+        frame = ttk.Frame(top, relief='solid', borderwidth=1)
+        frame.pack(fill='both', expand=True)
+        for value, label in self._items:
+            ttk.Checkbutton(frame, text=label, variable=self._vars[value],
+                            command=self._update_text).pack(
+                                anchor='w', padx=8, pady=1)
+        top.update_idletasks()
+        top.geometry('+%d+%d' % (
+            self._btn.winfo_rootx(),
+            self._btn.winfo_rooty() + self._btn.winfo_height()))
+        top.bind('<Escape>', lambda e: self._close())
+        self._popup = top
+        self._bind_id = self.winfo_toplevel().bind(
+            '<Button-1>', self._on_root_click, add='+')
+
+    def _on_root_click(self, event):
+        # 点按钮本身交给 Button 的 command 处理, 其余位置收起
+        if self._popup is not None and event.widget is not self._btn:
+            self._close()
+
+    def _close(self):
+        if self._popup is not None:
+            self._popup.destroy()
+            self._popup = None
+        if self._bind_id is not None:
+            self._bind_id, bid = None, self._bind_id
+            self.winfo_toplevel().unbind('<Button-1>', bid)
+
 
 # ---------------- MOD 配置选项 ----------------
 KEY_CHOICES = ['KEY_F%d' % i for i in range(1, 13)] + [
@@ -102,6 +179,9 @@ class InstallerGUI(object):
         self.root.minsize(680, 560)
         self.log_queue = queue.Queue()
         self.worker = None
+        self._veh_mtime = None   # 已加载清单的 mtime, 用于热加载判定
+        self._veh_size = None    # 已加载清单的字节数
+        self._veh_missing = False
 
         settings = load_settings()
         saved_root = settings.get('game_root')
@@ -110,6 +190,8 @@ class InstallerGUI(object):
         self._build_widgets(initial)
         self.root.after(100, self._pump_log)
         self.root.after(200, self._validate_game_root)
+        # 定时热加载车库清单: 游戏运行中文件更新后列表自动刷新
+        self.root.after(VEHICLES_POLL_MS, self._poll_vehicles)
         # 手动输入目录后, 回车或失焦时重新校验
         self.game_root_var.trace_add('write', self._on_game_root_changed)
 
@@ -176,7 +258,7 @@ class InstallerGUI(object):
     def _build_config_widgets(self, main, pad):
         cfg = ttk.LabelFrame(
             main, padding=4,
-            text='MOD 配置 (保存后约 1 秒生效, 多选逗号分隔, 留空=全部)')
+            text='MOD 配置 (保存后约 1 秒生效, 多选不勾=全部)')
         cfg.pack(fill='x', **pad)
 
         row1 = ttk.Frame(cfg)
@@ -199,51 +281,23 @@ class InstallerGUI(object):
         ttk.Combobox(row2, textvariable=self.premium_var, values=PREMIUM_MODES,
                      width=9, state='readonly').pack(side='left', padx=(2, 8))
         ttk.Label(row2, text='类型:').pack(side='left')
-        self.classes_var = tk.StringVar()
-        ttk.Entry(row2, textvariable=self.classes_var,
-                  width=26).pack(side='left', padx=2)
-        cls_add = ttk.Combobox(row2, width=11, state='readonly',
-                               values=[tag for tag, _ in CLASSES])
-        cls_add.set('添加...')
-        cls_add.bind('<<ComboboxSelected>>',
-                     lambda e: self._append_csv(self.classes_var, cls_add))
-        cls_add.pack(side='left', padx=2)
+        self.classes_combo = MultiSelectCombo(row2, CLASSES, width=22)
+        self.classes_combo.pack(side='left', padx=2)
 
         row3 = ttk.Frame(cfg)
         row3.pack(fill='x')
         ttk.Label(row3, text='国家:').pack(side='left')
-        self.nations_var = tk.StringVar()
-        ttk.Entry(row3, textvariable=self.nations_var,
-                  width=26).pack(side='left', padx=2)
-        nat_add = ttk.Combobox(row3, width=8, state='readonly',
-                               values=['%d %s' % (n, s) for n, s in NATIONS])
-        nat_add.set('添加...')
-        nat_add.bind('<<ComboboxSelected>>',
-                     lambda e: self._append_csv(self.nations_var, nat_add))
-        nat_add.pack(side='left', padx=2)
+        self.nations_combo = MultiSelectCombo(
+            row3, [('%d' % n, '%d %s' % (n, s)) for n, s in NATIONS],
+            width=32)
+        self.nations_combo.pack(side='left', padx=2)
 
         row4 = ttk.Frame(cfg)
         row4.pack(fill='x')
         ttk.Label(row4, text='等级:').pack(side='left')
-        self.tiers_var = tk.StringVar()
-        ttk.Entry(row4, textvariable=self.tiers_var,
-                  width=26).pack(side='left', padx=2)
-        tier_add = ttk.Combobox(row4, width=6, state='readonly',
-                                values=[str(t) for t in range(1, 11)])
-        tier_add.set('添加...')
-        tier_add.bind('<<ComboboxSelected>>',
-                      lambda e: self._append_csv(self.tiers_var, tier_add))
-        tier_add.pack(side='left', padx=2)
-
-    @staticmethod
-    def _append_csv(var, combo):
-        """下拉选中项追加到逗号分隔列表(多选), 选完下拉复位。"""
-        token = combo.get().split(' ', 1)[0]  # '5 中国' -> '5'
-        items = [x for x in var.get().split(',') if x]
-        if token not in items:
-            items.append(token)
-            var.set(','.join(items))
-        combo.set('添加...')
+        self.tiers_combo = MultiSelectCombo(
+            row4, [('%d' % t, '%d 级' % t) for t in range(1, 11)], width=32)
+        self.tiers_combo.pack(side='left', padx=2)
 
     # ---------- 辅助 ----------
 
@@ -301,7 +355,7 @@ class InstallerGUI(object):
                 '默认位置: %s' % DEFAULT_GAME_ROOT)
 
     def _build_vehicle_widgets(self, main, pad):
-        box = ttk.LabelFrame(main, padding=4, text='车库车辆')
+        box = ttk.LabelFrame(main, padding=4, text='车库车辆 (自动热加载)')
         box.pack(fill='both', expand=True, **pad)
 
         bar = ttk.Frame(box)
@@ -333,16 +387,31 @@ class InstallerGUI(object):
             return None
         return os.path.join(game_root, VEHICLES_FILE)
 
-    def _refresh_vehicles(self):
-        """读取 MOD 导出的车库清单并显示。"""
+    def _refresh_vehicles(self, force=True):
+        """读取 MOD 导出的车库清单并显示。force=False 时仅在文件变化后重绘。"""
         path = self._vehicles_path()
-        self.veh_tree.delete(*self.veh_tree.get_children())
         if path is None:
+            self.veh_tree.delete(*self.veh_tree.get_children())
+            self._veh_mtime = self._veh_size = None
+            self._veh_missing = True
             self.veh_count_var.set('请先设置有效的游戏目录')
             return
         if not os.path.isfile(path):
+            if not self._veh_missing:
+                self.veh_tree.delete(*self.veh_tree.get_children())
+                self._veh_missing = True
+            self._veh_mtime = self._veh_size = None
             self.veh_count_var.set(
                 '未找到车辆数据: 启动游戏进入车库约 10 秒后自动生成')
+            return
+        self._veh_missing = False
+        try:
+            mtime = os.path.getmtime(path)
+            size = os.path.getsize(path)
+        except OSError:
+            return
+        # 热加载: 文件未变化则跳过, 游戏内更新后下一次轮询自动重绘
+        if not force and mtime == self._veh_mtime and size == self._veh_size:
             return
         try:
             with open(path, 'r', encoding='utf-8') as fp:
@@ -353,6 +422,7 @@ class InstallerGUI(object):
         rows = data.get('vehicles') or []
         cls_map = dict(CLASSES)
         nat_map = dict(NATIONS)
+        self.veh_tree.delete(*self.veh_tree.get_children())
         for r in rows:
             level = r.get('level')
             self.veh_tree.insert('', 'end', values=(
@@ -362,8 +432,18 @@ class InstallerGUI(object):
                 nat_map.get(r.get('nationID'), r.get('nationID')),
                 level if level is not None else '?',
             ))
+        self._veh_mtime = mtime
+        self._veh_size = size
         self.veh_count_var.set('共 %d 辆 (数据时间: %s)' %
                                (len(rows), data.get('updated') or '未知'))
+
+    def _poll_vehicles(self):
+        """定时热加载: MOD 在游戏内更新清单文件后, 列表自动刷新。"""
+        try:
+            self._refresh_vehicles(force=False)
+            self.root.after(VEHICLES_POLL_MS, self._poll_vehicles)
+        except tk.TclError:
+            pass  # 窗口已关闭
 
     # ---------- MOD 配置 ----------
 
@@ -393,9 +473,9 @@ class InstallerGUI(object):
             pm = 0
         self.premium_var.set(PREMIUM_MODES[pm] if 0 <= pm < len(PREMIUM_MODES)
                              else PREMIUM_MODES[0])
-        self.classes_var.set((f.findtext('classes') or '').strip())
-        self.nations_var.set((f.findtext('nations') or '').strip())
-        self.tiers_var.set((f.findtext('tiers') or '').strip())
+        self.classes_combo.set((f.findtext('classes') or '').strip())
+        self.nations_combo.set((f.findtext('nations') or '').strip())
+        self.tiers_combo.set((f.findtext('tiers') or '').strip())
 
     def _save_config(self):
         """把界面值写回 randomVehicle.xml; 返回是否成功。"""
@@ -415,9 +495,9 @@ class InstallerGUI(object):
             premium = PREMIUM_MODES.index(self.premium_var.get())
         except ValueError:
             premium = 0
-        classes = self._norm_csv(self.classes_var.get())
-        nations = self._norm_csv(self.nations_var.get())
-        tiers = self._norm_csv(self.tiers_var.get())
+        classes = self._norm_csv(self.classes_combo.get())
+        nations = self._norm_csv(self.nations_combo.get())
+        tiers = self._norm_csv(self.tiers_combo.get())
         valid_cls = set(tag for tag, _ in CLASSES)
         if classes and any(c not in valid_cls for c in classes.split(',')):
             messagebox.showerror('格式无效', '坦克类型必须是: ' +
