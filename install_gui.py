@@ -26,6 +26,9 @@ from install_wotmod import DEFAULT_GAME_ROOT, find_game_root
 SETTINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                              'install_gui_settings.json')
 
+# MOD 运行时导出的车库清单文件名(位于游戏根目录)
+VEHICLES_FILE = 'mod_random_vehicle.vehicles.json'
+
 ICON_TEXT = 'WOT Random Vehicle MOD 安装器'
 
 # ---------------- MOD 配置选项 ----------------
@@ -97,7 +100,7 @@ class InstallerGUI(object):
     def __init__(self):
         self.root = tk.Tk()
         self.root.title(ICON_TEXT)
-        self.root.minsize(680, 640)
+        self.root.minsize(760, 860)
         self.log_queue = queue.Queue()
         self.worker = None
 
@@ -150,8 +153,11 @@ class InstallerGUI(object):
         ttk.Label(main, textvariable=self.status_var,
                   foreground='#0a7').pack(fill='x', **pad)
 
+        # 车库车辆列表
+        self._build_vehicle_widgets(main, pad)
+
         # 日志区
-        self.log_text = tk.Text(main, height=12, state='disabled',
+        self.log_text = tk.Text(main, height=8, state='disabled',
                                 font=('Consolas', 9), wrap='word')
         self.log_text.pack(fill='both', expand=True, **pad)
 
@@ -266,6 +272,7 @@ class InstallerGUI(object):
             ver = detect_version(root)
             if ver:
                 self.version_var.set(ver)
+            self._refresh_vehicles()
         else:
             self.status_var.set('未找到 paths.xml, 请确认目录是否为游戏根目录 '
                                 '(或手动指定版本后继续)')
@@ -286,6 +293,71 @@ class InstallerGUI(object):
             messagebox.showwarning(
                 '未找到游戏', '自动探测失败, 请点"浏览..."手动选择游戏目录。\n'
                 '默认位置: %s' % DEFAULT_GAME_ROOT)
+
+    def _build_vehicle_widgets(self, main, pad):
+        box = ttk.LabelFrame(main, padding=6, text='车库车辆')
+        box.pack(fill='both', expand=True, **pad)
+
+        bar = ttk.Frame(box)
+        bar.pack(fill='x', pady=(0, 4))
+        self.veh_count_var = tk.StringVar(value='尚未读取')
+        ttk.Label(bar, textvariable=self.veh_count_var).pack(side='left')
+        ttk.Button(bar, text='刷新列表',
+                   command=self._refresh_vehicles).pack(side='right')
+
+        wrap = ttk.Frame(box)
+        wrap.pack(fill='both', expand=True)
+        cols = ('name', 'class', 'pay', 'nation', 'tier')
+        self.veh_tree = ttk.Treeview(wrap, columns=cols, show='headings',
+                                     height=7)
+        for col, title, width in (('name', '车辆', 240), ('class', '类型', 110),
+                                  ('pay', '金币/银币', 90), ('nation', '国家', 80),
+                                  ('tier', '等级', 60)):
+            self.veh_tree.heading(col, text=title)
+            self.veh_tree.column(col, width=width, anchor='w')
+        scroll = ttk.Scrollbar(wrap, orient='vertical',
+                               command=self.veh_tree.yview)
+        self.veh_tree.configure(yscrollcommand=scroll.set)
+        self.veh_tree.pack(side='left', fill='both', expand=True)
+        scroll.pack(side='right', fill='y')
+
+    def _vehicles_path(self):
+        game_root = self.game_root_var.get().strip()
+        if not game_root or not os.path.isdir(game_root):
+            return None
+        return os.path.join(game_root, VEHICLES_FILE)
+
+    def _refresh_vehicles(self):
+        """读取 MOD 导出的车库清单并显示。"""
+        path = self._vehicles_path()
+        self.veh_tree.delete(*self.veh_tree.get_children())
+        if path is None:
+            self.veh_count_var.set('请先设置有效的游戏目录')
+            return
+        if not os.path.isfile(path):
+            self.veh_count_var.set(
+                '未找到车辆数据: 启动游戏进入车库约 10 秒后自动生成')
+            return
+        try:
+            with open(path, 'r', encoding='utf-8') as fp:
+                data = json.load(fp)
+        except (OSError, ValueError) as exc:
+            self.veh_count_var.set('读取失败: %r' % (exc,))
+            return
+        rows = data.get('vehicles') or []
+        cls_map = dict(CLASSES)
+        nat_map = dict(NATIONS)
+        for r in rows:
+            level = r.get('level')
+            self.veh_tree.insert('', 'end', values=(
+                r.get('name') or '?',
+                cls_map.get(r.get('class'), r.get('class') or '?'),
+                '金币' if r.get('premium') else '银币',
+                nat_map.get(r.get('nationID'), r.get('nationID')),
+                level if level is not None else '?',
+            ))
+        self.veh_count_var.set('共 %d 辆 (数据时间: %s)' %
+                               (len(rows), data.get('updated') or '未知'))
 
     # ---------- MOD 配置 ----------
 
@@ -432,6 +504,7 @@ class InstallerGUI(object):
     def _on_done(self, ok):
         self.install_btn.configure(state='normal')
         if ok:
+            self._refresh_vehicles()
             messagebox.showinfo('完成', '安装完成!\n重启游戏后按 F11 随机选车。')
         else:
             messagebox.showerror('失败', '安装失败, 详情见日志窗口。')

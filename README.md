@@ -21,6 +21,8 @@ F11 only picks from vehicles that match the **filter conditions**. Filters are c
 
 Configuration examples and instructions are in **[INSTALL.md](INSTALL.md#筛选随机池配置文件方式)**.
 
+The installer GUI (`install_gui.py`) has a **"车库车辆"** list showing every vehicle in your garage (name / type / premium / nation / tier), plus a "MOD 配置" panel to edit key and filters graphically. The list is read from `mod_random_vehicle.vehicles.json`, which the MOD exports into the game root folder on startup (~10 s after entering the garage) and refreshes on every hotkey press.
+
 ## Directory Structure
 
 ```

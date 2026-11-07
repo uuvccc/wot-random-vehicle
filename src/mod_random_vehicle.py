@@ -6,6 +6,7 @@ mod_random_vehicle.py —— 车库随机选车 GUI MOD (WOT CN 2.3.x)
 * 筛选配置写在 res/gui/mods/randomVehicle.xml 的 <filters> 节点
   (金币车 / 坦克类型 / 国家 / 等级, 逗号分隔多选, 留空=全部)
 * 配置文件运行时实时读取(mtime 变化约 1 秒内生效), 无需重启游戏
+* 车库车辆清单导出到 <游戏根>/mod_random_vehicle.vehicles.json, 供安装器界面展示
 * 纯客户端功能, 不读取服务器未下发信息, 不含任何作弊逻辑
 
 2.3.1.1 关键 API(经游戏字节码核实):
@@ -52,6 +53,7 @@ SELECT_COOLDOWN = 0.4
 FALLBACK_KEY = 0x57
 CONFIG_BASENAME = 'randomVehicle.xml'
 RELOAD_INTERVAL = 1.0  # 配置文件 mtime 检查间隔(秒)
+VEHICLES_FILE = 'mod_random_vehicle.vehicles.json'  # 车库清单导出(供安装器显示)
 
 # 筛选状态: premiumMode 0=不限 1=只要金币 2=只要银币
 _FILTERS = {'premiumMode': 0, 'classes': set(), 'nations': set(), 'tiers': set()}
@@ -361,6 +363,7 @@ def _on_hotkey():
     if not vehicles:
         _trace('HOTKEY: vehicles error')
         return
+    _export_vehicle_list(vehicles)
     cds = _apply_filters(vehicles)
     _trace('HOTKEY: filtered pool=%d (premium=%d classes=%s nations=%s tiers=%s)' %
            (len(cds), _FILTERS['premiumMode'], sorted(_FILTERS['classes']),
@@ -432,19 +435,56 @@ def finit():
     _stop()
 
 
-def _delayed_dump():
-    """启动延迟几秒后输出车库统计(等 items cache 同步), 供排障参考。"""
+def _export_vehicle_list(owned):
+    """把车库车辆清单写成 JSON, 供安装器界面展示(只含客户端已有数据)。"""
+    try:
+        import io
+        import json
+        rows = []
+        for cd, veh in sorted(owned.iteritems()):
+            try:
+                name = veh.userName
+            except Exception:
+                name = u'?'
+            rows.append({
+                'intCD': int(cd),
+                'name': unicode(name),
+                'class': _veh_class(veh),
+                'premium': bool(getattr(veh, 'isPremium', False)),
+                'nationID': getattr(veh, 'nationID', None),
+                'level': getattr(veh, 'level', None),
+            })
+        rows.sort(key=lambda r: (-(r['level'] or 0), r['name']))
+        data = {'count': len(rows),
+                'updated': time.strftime('%Y-%m-%d %H:%M:%S'),
+                'vehicles': rows}
+        path = os.path.join(os.getcwd(), VEHICLES_FILE)
+        with io.open(path, 'w', encoding='utf-8') as f:
+            f.write(unicode(json.dumps(data, ensure_ascii=False, indent=2)))
+        _trace('export vehicles -> %s (%d)' % (path, len(rows)))
+    except Exception as e:
+        _trace('export vehicles error: %r' % (e,))
+
+
+def _delayed_dump(attempt=6):
+    """启动延迟几秒后输出车库统计并导出车辆清单(等 items cache 同步)。"""
     try:
         from helpers import dependency
         from skeletons.gui.shared import IItemsCache
         from gui.shared.utils.requesters import REQ_CRITERIA
         owned = dependency.instance(IItemsCache).items.getVehicles(REQ_CRITERIA.INVENTORY)
         owned = dict((cd, veh) for cd, veh in owned.iteritems() if _is_usable_garage_vehicle(veh))
+        if not owned and attempt > 1:
+            BigWorld.callback(5.0, lambda: _delayed_dump(attempt - 1))
+            return
         _trace('DIAG: 车库可用车辆 %d 辆' % len(owned))
         _dump_owned_stats(owned)
         _dump_vehicle_list(owned)
+        _export_vehicle_list(owned)
     except Exception as e:
         _trace('DIAG: delayed dump error: %r' % (e,))
+        if attempt > 1:
+            BigWorld.callback(5.0, lambda: _delayed_dump(attempt - 1))
 
 
 # 模块级双保险
