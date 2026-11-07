@@ -18,6 +18,7 @@ mod_random_vehicle.py —— 车库随机选车 GUI MOD (WOT CN 2.3.x)
 import glob
 import os
 import random
+import sys
 import time
 import xml.etree.ElementTree as ET
 
@@ -54,6 +55,7 @@ FALLBACK_KEY = 0x57
 CONFIG_BASENAME = 'randomVehicle.xml'
 RELOAD_INTERVAL = 1.0  # 配置文件 mtime 检查间隔(秒)
 VEHICLES_FILE = 'mod_random_vehicle.vehicles.json'  # 车库清单导出(供安装器显示)
+EXPORT_INTERVAL = 30.0  # 车库清单定时导出间隔(秒), 保证车辆变动后自动更新
 
 # 筛选状态: premiumMode 0=不限 1=只要金币 2=只要银币
 _FILTERS = {'premiumMode': 0, 'classes': set(), 'nations': set(), 'tiers': set()}
@@ -161,6 +163,7 @@ def _key_code():
 _POLL_ON = [False]
 _WAS_DOWN = [False]
 _LAST_TIME = [0.0]
+_LAST_EXPORT = [0.0]
 
 
 # ---------------------------------------------------------------------------
@@ -388,6 +391,7 @@ def _tick():
     if not _POLL_ON[0]:
         return
     _maybe_reload_config()
+    _maybe_export()
     down = False
     try:
         down = bool(BigWorld.isKeyDown(_key_code()))
@@ -435,10 +439,55 @@ def finit():
     _stop()
 
 
+def _export_dirs():
+    """可能的游戏根目录: 当前工作目录 + 客户端 exe 所在目录(含 win64 的父目录)。"""
+    dirs = []
+
+    def add(d):
+        try:
+            d = os.path.abspath(d)
+        except Exception:
+            return
+        if d and os.path.isdir(d) and d not in dirs:
+            dirs.append(d)
+
+    add(os.getcwd())
+    try:
+        if sys.argv and sys.argv[0]:
+            d = os.path.dirname(os.path.abspath(sys.argv[0]))
+            add(d)
+            if os.path.basename(d).lower() in ('win64', 'win32', 'bin64', 'bin32'):
+                add(os.path.dirname(d))
+    except Exception:
+        pass
+    return dirs
+
+
+def _atomic_write(path, text):
+    """先写临时文件再整体替换, 避免安装器读到半截 JSON(Py2.7 无 os.replace)。"""
+    import io
+    tmp = path + '.tmp'
+    with io.open(tmp, 'w', encoding='utf-8') as f:
+        f.write(text)
+        try:
+            f.flush()
+            os.fsync(f.fileno())
+        except Exception:
+            pass
+    try:
+        os.replace(tmp, path)
+    except AttributeError:
+        if os.path.exists(path):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+        os.rename(tmp, path)
+
+
 def _export_vehicle_list(owned):
     """把车库车辆清单写成 JSON, 供安装器界面展示(只含客户端已有数据)。"""
     try:
-        import io
         import json
         rows = []
         for cd, veh in sorted(owned.iteritems()):
@@ -446,9 +495,14 @@ def _export_vehicle_list(owned):
                 name = veh.userName
             except Exception:
                 name = u'?'
+            if not isinstance(name, unicode):
+                try:
+                    name = unicode(name, 'utf-8')
+                except Exception:
+                    name = u'?'
             rows.append({
                 'intCD': int(cd),
-                'name': unicode(name),
+                'name': name,
                 'class': _veh_class(veh),
                 'premium': bool(getattr(veh, 'isPremium', False)),
                 'nationID': getattr(veh, 'nationID', None),
@@ -458,12 +512,30 @@ def _export_vehicle_list(owned):
         data = {'count': len(rows),
                 'updated': time.strftime('%Y-%m-%d %H:%M:%S'),
                 'vehicles': rows}
-        path = os.path.join(os.getcwd(), VEHICLES_FILE)
-        with io.open(path, 'w', encoding='utf-8') as f:
-            f.write(unicode(json.dumps(data, ensure_ascii=False, indent=2)))
-        _trace('export vehicles -> %s (%d)' % (path, len(rows)))
+        text = unicode(json.dumps(data, ensure_ascii=False, indent=2))
+        for d in _export_dirs():
+            path = os.path.join(d, VEHICLES_FILE)
+            try:
+                _atomic_write(path, text)
+                _trace('export vehicles -> %s (%d)' % (path, len(rows)))
+            except Exception as e:
+                _trace('export vehicles error at %s: %r' % (path, e))
+        _LAST_EXPORT[0] = time.time()
     except Exception as e:
         _trace('export vehicles error: %r' % (e,))
+
+
+def _maybe_export(force=False):
+    """车辆数据就绪后定时导出清单, 让安装器列表跟随车库变化自动更新。"""
+    now = time.time()
+    if not force and now - _LAST_EXPORT[0] < EXPORT_INTERVAL:
+        return
+    _LAST_EXPORT[0] = now
+    if _in_battle():
+        return
+    vehicles = _get_owned_vehicles()
+    if vehicles:
+        _export_vehicle_list(vehicles)
 
 
 def _delayed_dump(attempt=6):
@@ -480,7 +552,10 @@ def _delayed_dump(attempt=6):
         _trace('DIAG: 车库可用车辆 %d 辆' % len(owned))
         _dump_owned_stats(owned)
         _dump_vehicle_list(owned)
-        _export_vehicle_list(owned)
+        if owned:
+            _export_vehicle_list(owned)
+        else:
+            _trace('DIAG: 车库仍无可用车辆, 暂不导出')
     except Exception as e:
         _trace('DIAG: delayed dump error: %r' % (e,))
         if attempt > 1:

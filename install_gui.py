@@ -181,6 +181,7 @@ class InstallerGUI(object):
         self.worker = None
         self._veh_mtime = None   # 已加载清单的 mtime, 用于热加载判定
         self._veh_size = None    # 已加载清单的字节数
+        self._veh_path = None    # 已加载清单的路径(MOD 可能写到多个位置)
         self._veh_missing = False
 
         settings = load_settings()
@@ -381,37 +382,47 @@ class InstallerGUI(object):
         self.veh_tree.pack(side='left', fill='both', expand=True)
         scroll.pack(side='right', fill='y')
 
-    def _vehicles_path(self):
-        game_root = self.game_root_var.get().strip()
-        if not game_root or not os.path.isdir(game_root):
-            return None
-        return os.path.join(game_root, VEHICLES_FILE)
+    @staticmethod
+    def _vehicles_candidates(game_root):
+        """MOD 可能写入的清单路径: 游戏根 + 常见客户端子目录, 按 mtime 倒序。"""
+        paths = [os.path.join(game_root, VEHICLES_FILE)]
+        for sub in ('win64', 'win32', 'bin64', 'bin32'):
+            paths.append(os.path.join(game_root, sub, VEHICLES_FILE))
+        found = [p for p in paths if os.path.isfile(p)]
+        try:
+            found.sort(key=os.path.getmtime, reverse=True)
+        except OSError:
+            pass
+        return found
 
     def _refresh_vehicles(self, force=True):
         """读取 MOD 导出的车库清单并显示。force=False 时仅在文件变化后重绘。"""
-        path = self._vehicles_path()
-        if path is None:
+        game_root = self.game_root_var.get().strip()
+        if not game_root or not os.path.isdir(game_root):
             self.veh_tree.delete(*self.veh_tree.get_children())
-            self._veh_mtime = self._veh_size = None
+            self._veh_mtime = self._veh_size = self._veh_path = None
             self._veh_missing = True
             self.veh_count_var.set('请先设置有效的游戏目录')
             return
-        if not os.path.isfile(path):
+        paths = self._vehicles_candidates(game_root)
+        if not paths:
             if not self._veh_missing:
                 self.veh_tree.delete(*self.veh_tree.get_children())
                 self._veh_missing = True
-            self._veh_mtime = self._veh_size = None
+            self._veh_mtime = self._veh_size = self._veh_path = None
             self.veh_count_var.set(
                 '未找到车辆数据: 启动游戏进入车库约 10 秒后自动生成')
             return
         self._veh_missing = False
+        path = paths[0]
         try:
             mtime = os.path.getmtime(path)
             size = os.path.getsize(path)
         except OSError:
             return
-        # 热加载: 文件未变化则跳过, 游戏内更新后下一次轮询自动重绘
-        if not force and mtime == self._veh_mtime and size == self._veh_size:
+        # 热加载: 路径/时间戳/大小都未变化则跳过
+        if (not force and path == self._veh_path
+                and mtime == self._veh_mtime and size == self._veh_size):
             return
         try:
             with open(path, 'r', encoding='utf-8') as fp:
@@ -434,6 +445,7 @@ class InstallerGUI(object):
             ))
         self._veh_mtime = mtime
         self._veh_size = size
+        self._veh_path = path
         self.veh_count_var.set('共 %d 辆 (数据时间: %s)' %
                                (len(rows), data.get('updated') or '未知'))
 
